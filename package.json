@@ -1,0 +1,15 @@
+{
+  "name": "storage-manager",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local macOS storage X-ray: scan your disk, see what's eating space, and clean it up safely.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

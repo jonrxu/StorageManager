@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Storage Manager</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%235b8def'/%3E%3Ccircle cx='32' cy='32' r='11' fill='%230e1014'/%3E%3Ccircle cx='32' cy='32' r='4' fill='%235b8def'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 64 64" class="brand-mark" aria-hidden="true">
+        <circle cx="32" cy="32" r="28" fill="currentColor" opacity="0.9"/>
+        <circle cx="32" cy="32" r="11" fill="#0e1014"/>
+        <circle cx="32" cy="32" r="4" fill="currentColor"/>
+      </svg>
+      <div class="brand-text">
+        <h1>Storage Manager</h1>
+        <p>local disk x-ray &amp; cleanup</p>
+      </div>
+    </div>
+
+    <div class="disk-pill" id="diskPill" hidden>
+      <div class="disk-pill-text"><strong id="diskFree"></strong> free of <span id="diskTotal"></span></div>
+      <div class="disk-bar"><div id="diskBarFill"></div></div>
+    </div>
+
+    <div class="topbar-actions">
+      <button class="btn ghost" id="rescanBtn" hidden>Rescan</button>
+      <button class="icon-btn" id="settingsBtn" aria-label="AI settings" title="AI settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <div class="selection-bar" id="selectionBar" hidden>
+    <span id="selectionInfo"></span>
+    <button class="btn ghost small" id="selectionClear">Clear</button>
+    <button class="btn danger small" id="selectionTrash">Move to Trash</button>
+  </div>
+
+  <div class="modal-overlay" id="settingsModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <h2 id="settingsTitle">AI advisor settings</h2>
+      <p class="muted small">
+        Only used for the optional AI cleanup plan. Your key is stored on this Mac
+        (<code>data/config.json</code>) and is only ever sent to the provider you pick.
+      </p>
+      <label class="field">Provider
+        <select id="providerSelect">
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="openai">OpenAI (GPT)</option>
+        </select>
+      </label>
+      <label class="field">API key
+        <input type="password" id="apiKeyInput" placeholder="paste your API key" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="muted small" id="keyStatus"></p>
+      <label class="field"><span>Model <span class="muted">(optional)</span></span>
+        <input type="text" id="modelInput" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close>Cancel</button>
+        <button class="btn primary" id="saveSettingsBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="confirmModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <h2 id="confirmTitle"></h2>
+      <p class="muted" id="confirmText"></p>
+      <ul id="confirmList" class="confirm-list"></ul>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close>Cancel</button>
+        <button class="btn danger" id="confirmBtn"></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
