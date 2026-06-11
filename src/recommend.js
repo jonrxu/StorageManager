@@ -12,13 +12,14 @@ const DAY = 864e5;
  * Each recommendation: { id, title, description, risk: 'safe'|'caution',
  *   bytes, items: [{path, bytes, note?}], hint?, actionable, special? }
  */
-async function buildRecommendations(scanner) {
+async function buildRecommendations(scanner, apps = []) {
   const recs = [];
   const home = scanner.home;
   const cum = scanner.cumBytes || new Map();
   const kids = scanner.childIndex || new Map();
   const abs = (rel) => path.join(home, rel);
   const sizeOf = (rel) => cum.get(abs(rel)) || 0;
+  const absSize = (p) => cum.get(p) || 0;
   const topChildren = (rel, n) => (kids.get(abs(rel)) || []).slice(0, n);
 
   // 1. App caches and logs — the classic safe win.
@@ -247,6 +248,66 @@ async function buildRecommendations(scanner) {
         hint: 'Run `docker system prune -a` in a terminal to reclaim space safely.',
       });
     }
+  }
+
+  // 13. Homebrew (cleans itself better than we can).
+  {
+    const items = [];
+    for (const p of ['/opt/homebrew', '/usr/local/Homebrew']) {
+      const b = absSize(p);
+      if (b > 100 * MB) items.push({ path: p, bytes: b, note: 'managed by brew' });
+    }
+    push(recs, {
+      id: 'homebrew',
+      risk: 'safe',
+      title: 'Tidy up Homebrew',
+      description: 'Homebrew keeps old versions and downloads around. Its built-in cleanup is safe and usually frees a few GB.',
+      items,
+      actionable: false,
+      hint: 'In Terminal: brew cleanup --prune=all && brew autoremove',
+    });
+  }
+
+  // 14. Apps you don't use (whole-Mac scans only).
+  {
+    const now = Date.now();
+    // Only flag apps with positive evidence of being old — "unknown" is not "unused".
+    const items = (apps || [])
+      .filter((a) => a.bytes > 200 * MB && a.lastUsedMs && now - a.lastUsedMs > 180 * DAY)
+      .slice(0, 12)
+      .map((a) => ({
+        path: a.path,
+        bytes: a.bytes,
+        note: `last opened ${a.lastUsedSource === 'atime' ? '~' : ''}${fmtAge(Math.floor((now - a.lastUsedMs) / DAY))} ago`,
+      }));
+    push(recs, {
+      id: 'unused-apps',
+      risk: 'caution',
+      title: "Apps you haven't opened in 6+ months",
+      description: 'Whole applications ranked by size. Uninstalling a couple of big unused apps is often the fastest win.',
+      items,
+      actionable: false,
+      hint: 'Apps cannot be trashed from here — in Finder, drag the app to the Trash (or use its own uninstaller).',
+      minBytes: 200 * MB,
+    });
+  }
+
+  // 15. System-wide caches & logs (admin only).
+  {
+    const items = [];
+    for (const p of ['/Library/Caches', '/Library/Logs']) {
+      const b = absSize(p);
+      if (b > 50 * MB) items.push({ path: p, bytes: b, note: 'admin rights needed' });
+    }
+    push(recs, {
+      id: 'system-caches',
+      risk: 'caution',
+      title: 'System-wide caches & logs',
+      description: 'Shared caches for all users of this Mac. They regenerate, but clearing them requires an admin terminal.',
+      items,
+      actionable: false,
+      hint: 'In Terminal: sudo rm -rf "/Library/Caches/<a folder you recognize>" — avoid wiping the whole folder blindly.',
+    });
   }
 
   recs.sort((a, b) => (a.risk === b.risk ? b.bytes - a.bytes : a.risk === 'safe' ? -1 : 1));

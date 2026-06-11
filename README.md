@@ -6,10 +6,12 @@ No Electron, no accounts, no telemetry: a tiny Node server (one dependency) plus
 
 ## Features
 
-- **Full storage X-ray** — scans your home folder and breaks usage down into understandable categories (Caches & Logs, Developer junk, Downloads, Media, App Data, Device Backups, …) with a donut chart and drill-down folder browser.
+- **Whole-Mac X-ray** — "Scan this Mac" covers your home folder **plus** `/Applications`, `/Library`, Homebrew (`/opt`, `/usr/local`) and system data (`/private/var`), broken down into understandable categories (Caches & Logs, Developer, Applications, System Library, …) with a donut chart and drill-down folder browser. You can also scan any single folder.
+- **Apps by size** — every installed app ranked by real size with its last-opened date (via Spotlight), so "8 GB, last opened 14 months ago" is one glance away. Removal happens via Finder, as macOS intends.
 - **Cleanup recommendations** — rule-based suggestions grouped by risk:
   - *Safe to clean*: app caches, logs, package-manager caches (npm/cargo/Gradle/…), Xcode DerivedData, Mail attachment previews, Trash.
-  - *Review first*: old Downloads, stale `node_modules`, iPhone backups, Xcode simulators, huge files untouched for 6+ months, large files added in the last 30 days.
+  - *Review first*: old Downloads, stale `node_modules`, iPhone backups, Xcode simulators, huge files untouched for 6+ months, large files added in the last 30 days, apps you haven't opened in 6+ months, system-wide caches.
+  - System-area suggestions (apps, `/Library`, Homebrew) are advisory: the app tells you *how* to reclaim the space (Finder, `brew cleanup`, admin terminal) but never deletes outside your home folder itself.
 - **AI cleanup advisor (optional)** — sends a compact summary (folder names + sizes only, never file contents) to Anthropic or OpenAI with your own API key and renders a tailored, prioritized plan with one-click cleanup for verified paths.
 - **Safe by design** — deletions go to the **Trash** (recoverable, with Finder "Put Back" support), never `rm -rf`. The app refuses to touch anything outside your home folder or whole standard folders like `~/Documents`. Space is freed when you empty the Trash, which the app offers as an explicit, separate step.
 

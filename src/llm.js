@@ -28,6 +28,7 @@ Respond with ONLY a JSON object (no markdown fences, no prose around it) of this
 Rules:
 - Only reference paths that literally appear in the summary. Never invent or guess paths.
 - Prefer caches, build artifacts, installers, old archives/disk images, and stale large files.
+- Suggesting removal of unused third-party applications (from the "applications" list) is allowed — tell the user to remove them via Finder or the app's uninstaller, and never suggest removing apps they appear to use regularly.
 - Never recommend deleting personal documents, photo libraries, mail data, or app settings unless the summary clearly shows something redundant (and say why).
 - Order recommendations by reclaimable space, largest first. Give 4-8 recommendations.
 - estimatedBytes must be a number (bytes), derived from sizes in the summary.`;

@@ -259,6 +259,12 @@ details.rec[open] .chev { transform: rotate(90deg); }
 }
 .check:disabled { opacity: 0.35; cursor: default; }
 
+.check-spacer { width: 17px; height: 17px; flex: none; display: inline-block; }
+.x-age.warn { color: var(--caution); }
+.hero-actions { margin-bottom: 14px; }
+.hero-form { margin-top: 8px; }
+.fineprint .link { font-size: 12.5px; }
+
 /* ---------------------------------------------------------------- AI panel */
 .ai-card .card-head { margin-bottom: 6px; }
 .ai-loading { text-align: center; padding: 22px; }

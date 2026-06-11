@@ -14,6 +14,9 @@ const CATEGORIES = [
   { id: 'apps', label: 'Applications', color: '#fb923c', hint: 'Apps installed in your home folder.' },
   { id: 'trash', label: 'Trash', color: '#a1a1aa', hint: 'Deleted files that have not been emptied yet.' },
   { id: 'dotfiles', label: 'Tools & Config', color: '#94a3b8', hint: 'Hidden tool and configuration folders in your home directory.' },
+  { id: 'syslib', label: 'System Library', color: '#818cf8', hint: 'Shared support files for all users (/Library). Mostly hands-off.' },
+  { id: 'systools', label: 'Homebrew & Dev Tools', color: '#e879f9', hint: 'Homebrew and command-line toolchains (/opt, /usr/local). Clean with `brew cleanup`.' },
+  { id: 'sysdata', label: 'System Data', color: '#9ca3af', hint: 'macOS working data: system caches, logs, swap. Managed by the OS.' },
   { id: 'other', label: 'Other', color: '#64748b', hint: 'Everything else.' },
 ];
 
@@ -46,4 +49,23 @@ function categorize(rel) {
   return 'other';
 }
 
-module.exports = { CATEGORIES, categorize };
+/**
+ * Classify any absolute path, inside or outside the home folder.
+ * Paths under `home` use the home-relative rules above; system locations
+ * (/Applications, /Library, /opt, /usr/local, /private) get system categories.
+ */
+function categorizeAbsolute(absPath, home, isDir) {
+  const sfx = isDir ? '/' : '';
+  if (absPath === home) return 'other';
+  if (absPath.startsWith(home + '/')) return categorize(absPath.slice(home.length + 1) + sfx);
+  const p = absPath + sfx;
+  if (p.startsWith('/Applications/')) return 'apps';
+  if (p.startsWith('/Library/Caches/') || p.startsWith('/Library/Logs/')) return 'caches';
+  if (p.startsWith('/Library/Developer/')) return 'dev';
+  if (p.startsWith('/Library/')) return 'syslib';
+  if (p.startsWith('/opt/') || p.startsWith('/usr/local/')) return 'systools';
+  if (p.startsWith('/private/')) return 'sysdata';
+  return 'other';
+}
+
+module.exports = { CATEGORIES, categorize, categorizeAbsolute };

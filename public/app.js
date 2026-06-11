@@ -17,6 +17,7 @@ const state = {
 const ICONS = {
   folder: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>',
   file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+  app: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="12" cy="12" r="3.2"/></svg>',
   disk: '<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3"><circle cx="32" cy="32" r="26"/><circle cx="32" cy="32" r="10"/><circle cx="32" cy="32" r="2.5" fill="currentColor"/><path d="M32 6a26 26 0 0 1 26 26" stroke-width="6" stroke-linecap="round" opacity="0.5"/></svg>',
 };
 
@@ -92,30 +93,57 @@ function renderHero() {
     <section class="hero card">
       <div class="hero-icon">${ICONS.disk}</div>
       <h2>See what's eating your disk</h2>
-      <p class="muted">Scans your files locally, shows where the space goes, and recommends what's safe to clean.
+      <p class="muted">Scans your whole Mac locally — home folder, apps, /Library, Homebrew and system data —
+      shows where the space goes, and recommends what's safe to clean.
       Nothing leaves this Mac unless you ask the optional AI advisor for a plan.</p>
-      <form class="hero-form" id="scanForm">
+      <div class="hero-actions">
+        <button class="btn primary big" id="scanMacBtn">Scan this Mac</button>
+      </div>
+      <form class="hero-form" id="scanForm" hidden>
         <input id="scanPath" value="~" spellcheck="false" autocomplete="off" aria-label="Folder to scan">
-        <button class="btn primary big" type="submit">Scan my storage</button>
+        <button class="btn primary" type="submit">Scan folder</button>
       </form>
-      <p class="fineprint">Leave it at <code>~</code> to scan your whole home folder — that's where almost all reclaimable space lives. A first full scan typically takes a minute or two.</p>
+      <p class="fineprint"><button class="link" id="customToggle">…or scan a single folder instead</button></p>
+      <p class="fineprint">A full first scan typically takes a minute or two. Admin-only system folders are counted as skipped, not touched.</p>
     </section>`;
+  $('#scanMacBtn').addEventListener('click', () => startScan({ mode: 'machine' }));
+  $('#customToggle').addEventListener('click', () => {
+    const f = $('#scanForm');
+    f.hidden = !f.hidden;
+    if (!f.hidden) $('#scanPath').focus();
+  });
   $('#scanForm').addEventListener('submit', (e) => {
     e.preventDefault();
-    startScan($('#scanPath').value.trim() || '~');
+    startScan({ path: $('#scanPath').value.trim() || '~' });
   });
 }
 
 // --------------------------------------------------------------------- scan
-async function startScan(path) {
+async function startScan(spec) {
   try {
-    await api('/api/scan', { path });
+    await api('/api/scan', spec);
     state.aiResult = null;
     renderProgress();
     startPolling();
   } catch (e) {
     toast(e.message, 'error');
   }
+}
+
+function scanLabel() {
+  const r = state.result;
+  return r.mode === 'machine' ? 'This Mac' : shortPath(r.roots[0].path);
+}
+
+function canTrash(p) {
+  const home = state.result?.home;
+  return Boolean(home) && p !== home && p.startsWith(home + '/');
+}
+
+function checkCell(p, bytes) {
+  return canTrash(p)
+    ? `<input type="checkbox" class="check item-check" data-path="${escapeHtml(p)}" data-bytes="${bytes}" ${state.selection.has(p) ? 'checked' : ''}>`
+    : '<span class="check-spacer" title="Outside your home folder — remove via Finder or an admin terminal"></span>';
 }
 
 function renderProgress() {
@@ -186,15 +214,15 @@ function renderResults() {
 
   view.innerHTML = `
     ${r.errors && r.errors.permission > 0 ? `
-      <div class="banner">${fmtCount(r.errors.permission)} protected items couldn't be read (macOS privacy) — often including your Photos library and Trash.
-      Full Disk Access follows the app the server was <em>launched from</em> (Terminal, Cursor, …). Give that app <strong>Full Disk Access</strong> in System Settings → Privacy &amp; Security, then restart the server and rescan.</div>` : ''}
+      <div class="banner">${fmtCount(r.errors.permission)} protected items couldn't be read (macOS privacy or admin-only system areas).
+      For the privacy ones (Photos library, Trash, …): Full Disk Access follows the app the server was <em>launched from</em> (Terminal, Cursor, …). Give that app <strong>Full Disk Access</strong> in System Settings → Privacy &amp; Security, then restart the server and rescan.</div>` : ''}
 
     <section class="summary-row">
       <div class="card donut-card">
         <h3>Storage composition</h3>
         <div class="donut-wrap" id="donutWrap">
           <div id="donut"></div>
-          <div class="donut-center"><strong>${fmtBytes(r.totalBytes)}</strong><span>${escapeHtml(shortPath(r.root))}</span></div>
+          <div class="donut-center"><strong>${fmtBytes(r.totalBytes)}</strong><span>${escapeHtml(scanLabel())}</span></div>
         </div>
         <p class="muted small">${fmtCount(r.filesScanned)} files · scanned in ${(r.durationMs / 1000).toFixed(1)}s</p>
         <button class="link" id="newScanLink">Scan a different folder…</button>
@@ -227,6 +255,7 @@ function renderResults() {
         <button data-tab="folders" class="tab active">Largest folders</button>
         <button data-tab="files" class="tab">Largest files</button>
         <button data-tab="recent" class="tab">Recently added</button>
+        <button data-tab="apps" class="tab">Apps by size</button>
       </div>
       <div id="explorerBody"></div>
     </section>`;
@@ -238,8 +267,8 @@ function renderResults() {
   $('#newScanLink').addEventListener('click', renderHero);
   $('#explorerTabs').addEventListener('click', onTabClick);
   state.activeTab = 'folders';
-  state.explorerPath = r.root;
-  explorerGo(r.root);
+  state.explorerPath = r.mode === 'machine' ? '__top__' : r.roots[0].path;
+  explorerGo(state.explorerPath);
 }
 
 // donut ---------------------------------------------------------------------
@@ -443,15 +472,20 @@ function setActiveTab(name) {
   state.activeTab = name;
   document.querySelectorAll('#explorerTabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   const r = state.result;
-  if (name === 'folders') explorerGo(state.explorerPath || r.root);
+  if (name === 'folders') explorerGo(state.explorerPath || (r.mode === 'machine' ? '__top__' : r.roots[0].path));
   else if (name === 'files') renderFileList(r.largeFiles, 'mtime', 'No files over 50 MB found.');
-  else renderFileList(r.recentFiles, 'birthtime', 'No sizable files added in the last 30 days.');
+  else if (name === 'recent') renderFileList(r.recentFiles, 'birthtime', 'No sizable files added in the last 30 days.');
+  else renderAppsList();
 }
 
 async function explorerGo(p) {
   state.explorerPath = p;
   const body = $('#explorerBody');
   if (!body) return;
+  if (p === '__top__') {
+    renderRootsOverview();
+    return;
+  }
   body.innerHTML = '<div class="loading">Loading…</div>';
   try {
     const data = await api('/api/dir?path=' + encodeURIComponent(p));
@@ -460,6 +494,40 @@ async function explorerGo(p) {
   } catch (e) {
     body.innerHTML = `<p class="muted pad">${escapeHtml(e.message)}</p>`;
   }
+}
+
+function rootLabel(p) {
+  if (p === state.result?.home) return 'Home folder (~)';
+  return (
+    {
+      '/Applications': 'Applications',
+      '/Library': 'System Library (/Library)',
+      '/opt': 'Homebrew & tools (/opt)',
+      '/usr/local': 'Dev tools (/usr/local)',
+      '/private/var': 'System data (/private/var)',
+    }[p] || shortPath(p)
+  );
+}
+
+function renderRootsOverview() {
+  const roots = [...state.result.roots].sort((a, b) => b.bytes - a.bytes);
+  const max = Math.max(...roots.map((x) => x.bytes), 1);
+  $('#explorerBody').innerHTML = `
+    <div class="crumbs"><span class="crumb current">This Mac</span></div>
+    <div class="x-list">
+      ${roots
+        .map(
+          (root) => `
+        <div class="x-row is-dir">
+          <span class="check-spacer"></span>
+          <span class="x-icon">${ICONS.folder}</span>
+          <button class="x-name" data-goto="${escapeHtml(root.path)}" title="${escapeHtml(root.path)}">${escapeHtml(rootLabel(root.path))}</button>
+          <span class="x-bar"><i style="width:${((root.bytes / max) * 100).toFixed(1)}%"></i></span>
+          <span class="x-bytes">${fmtBytes(root.bytes)}</span>
+        </div>`
+        )
+        .join('')}
+    </div>`;
 }
 
 function renderExplorer(data) {
@@ -471,8 +539,7 @@ function renderExplorer(data) {
         .map(
           (ent) => `
         <div class="x-row ${ent.isDir ? 'is-dir' : ''}">
-          <input type="checkbox" class="check item-check" data-path="${escapeHtml(ent.path)}" data-bytes="${ent.bytes}"
-            ${state.selection.has(ent.path) ? 'checked' : ''}>
+          ${checkCell(ent.path, ent.bytes)}
           <span class="x-icon">${ent.isDir ? ICONS.folder : ICONS.file}</span>
           ${ent.isDir
             ? `<button class="x-name" data-goto="${escapeHtml(ent.path)}" title="${escapeHtml(ent.name)}">${escapeHtml(ent.name)}</button>`
@@ -493,7 +560,7 @@ function breadcrumb(p, root) {
     if (cur === root) break;
     cur = cur.slice(0, cur.lastIndexOf('/')) || root;
   }
-  return parts
+  let html = parts
     .map((part, i) => {
       const last = i === parts.length - 1;
       return last
@@ -501,6 +568,10 @@ function breadcrumb(p, root) {
         : `<button class="crumb" data-goto="${escapeHtml(part.path)}">${escapeHtml(part.name)}</button><span class="crumb-sep">/</span>`;
     })
     .join('');
+  if (state.result?.mode === 'machine') {
+    html = `<button class="crumb" data-goto="__top__">This Mac</button><span class="crumb-sep">/</span>` + html;
+  }
+  return html;
 }
 
 function renderFileList(files, ageField, emptyMsg) {
@@ -510,8 +581,7 @@ function renderFileList(files, ageField, emptyMsg) {
           .map(
             (f) => `
           <div class="x-row">
-            <input type="checkbox" class="check item-check" data-path="${escapeHtml(f.path)}" data-bytes="${f.bytes}"
-              ${state.selection.has(f.path) ? 'checked' : ''}>
+            ${checkCell(f.path, f.bytes)}
             <span class="x-icon">${ICONS.file}</span>
             <span class="x-name mono" title="${escapeHtml(f.path)}">${escapeHtml(shortPath(f.path))}</span>
             <span class="x-age">${ageField === 'birthtime' ? 'added ' : ''}${fmtAgo(f[ageField])}</span>
@@ -521,6 +591,31 @@ function renderFileList(files, ageField, emptyMsg) {
           .join('')}
       </div>`
     : `<p class="muted pad">${emptyMsg}</p>`;
+}
+
+function renderAppsList() {
+  const apps = state.result.apps || [];
+  const now = Date.now();
+  $('#explorerBody').innerHTML = apps.length
+    ? `<p class="muted small" style="margin:4px 0 10px">Sizes cover the whole app bundle. Apps can't be trashed from here —
+        remove them in Finder (drag to Trash) or with their own uninstaller.</p>
+      <div class="x-list">
+        ${apps
+          .map((a) => {
+            const stale = a.lastUsedMs && now - a.lastUsedMs > 180 * 864e5;
+            const approx = a.lastUsedSource === 'atime' ? '~' : '';
+            return `
+          <div class="x-row">
+            <span class="check-spacer"></span>
+            <span class="x-icon">${ICONS.app}</span>
+            <span class="x-name" title="${escapeHtml(a.path)}">${escapeHtml(a.name)}</span>
+            <span class="x-age ${stale ? 'warn' : ''}">${a.lastUsedMs ? `opened ${approx}` + fmtAgo(a.lastUsedMs) : 'usage unknown'}</span>
+            <span class="x-bytes">${fmtBytes(a.bytes)}</span>
+          </div>`;
+          })
+          .join('')}
+      </div>`
+    : '<p class="muted pad">No apps found — run a "Scan this Mac" to include /Applications.</p>';
 }
 
 // selection & trash -------------------------------------------------------------
@@ -688,7 +783,10 @@ function closeModals() {
 // global wiring -------------------------------------------------------------------
 function wireChrome() {
   $('#settingsBtn').addEventListener('click', openSettings);
-  $('#rescanBtn').addEventListener('click', () => state.result && startScan(state.result.root));
+  $('#rescanBtn').addEventListener('click', () => {
+    if (!state.result) return;
+    startScan(state.result.mode === 'machine' ? { mode: 'machine' } : { path: state.result.roots[0].path });
+  });
   $('#selectionClear').addEventListener('click', clearSelection);
   $('#selectionTrash').addEventListener('click', confirmSelectionTrash);
   $('#saveSettingsBtn').addEventListener('click', saveSettings);

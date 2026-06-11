@@ -11,6 +11,7 @@ const { execFile } = require('child_process');
 
 const { Scanner } = require('./src/scanner');
 const { buildRecommendations } = require('./src/recommend');
+const { rankApplications } = require('./src/apps');
 const { moveToTrash, emptyTrash, validateTrashable } = require('./src/trash');
 const settings = require('./src/settings');
 const { analyze } = require('./src/llm');
@@ -55,24 +56,38 @@ app.get('/api/disk', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------- scan
+// System areas included in a whole-Mac scan, alongside the home folder.
+// (/System and the sealed system volume are skipped: read-only and not cleanable.)
+const SYSTEM_ROOTS = ['/Applications', '/Library', '/opt', '/usr/local', '/private/var'];
+
 app.post('/api/scan', async (req, res) => {
   if (scanState.state === 'running') return res.status(409).json({ error: 'A scan is already running.' });
 
-  let root = req.body && req.body.path ? String(req.body.path).trim() : '';
-  if (!root || root === '~') root = os.homedir();
-  if (root.startsWith('~/')) root = path.join(os.homedir(), root.slice(2));
-  root = path.resolve(root);
+  const body = req.body || {};
+  let p = body.path ? String(body.path).trim() : '';
+  if (p === '~') p = os.homedir();
+  if (p.startsWith('~/')) p = path.join(os.homedir(), p.slice(2));
 
-  try {
-    const st = await fs.stat(root);
-    if (!st.isDirectory()) return res.status(400).json({ error: `Not a folder: ${root}` });
-  } catch {
-    return res.status(400).json({ error: `Folder not found: ${root}` });
+  let mode, roots;
+  if (body.mode === 'machine' || !p || path.resolve(p) === '/') {
+    mode = 'machine';
+    roots = [os.homedir(), ...SYSTEM_ROOTS];
+  } else {
+    mode = 'folder';
+    roots = [path.resolve(p)];
   }
 
-  scanner = new Scanner(root);
+  const validRoots = [];
+  for (const r of roots) {
+    try {
+      if ((await fs.stat(r)).isDirectory()) validRoots.push(r);
+    } catch {}
+  }
+  if (!validRoots.length) return res.status(400).json({ error: `Folder not found: ${roots[0]}` });
+
+  scanner = new Scanner(validRoots);
   result = null;
-  scanState = { state: 'running', startedAt: Date.now() };
+  scanState = { state: 'running', startedAt: Date.now(), mode };
 
   scanner
     .run()
@@ -82,19 +97,25 @@ app.post('/api/scan', async (req, res) => {
         return;
       }
       let recommendations = [];
+      let apps = [];
       try {
-        recommendations = await buildRecommendations(scanner);
+        apps = await rankApplications(scanner);
+      } catch (e) {
+        console.error('Failed to rank applications:', e);
+      }
+      try {
+        recommendations = await buildRecommendations(scanner, apps);
       } catch (e) {
         console.error('Failed to build recommendations:', e);
       }
-      result = { ...scanResult, recommendations };
+      result = { ...scanResult, recommendations, apps, mode };
       scanState = { state: 'done' };
     })
     .catch((e) => {
       scanState = { state: 'error', error: e.message };
     });
 
-  res.json({ ok: true, root });
+  res.json({ ok: true, roots: validRoots, mode });
 });
 
 app.get('/api/scan/status', (req, res) => {
@@ -123,9 +144,10 @@ app.post('/api/scan/cancel', (req, res) => {
 app.get('/api/dir', async (req, res) => {
   try {
     if (!scanner || !scanner.cumBytes) return res.status(400).json({ error: 'Run a scan first.' });
-    const p = path.resolve(String(req.query.path || scanner.root));
-    if (p !== scanner.root && !p.startsWith(scanner.root + path.sep)) {
-      return res.status(400).json({ error: 'Path is outside the scanned folder.' });
+    const p = path.resolve(String(req.query.path || scanner.roots[0]));
+    const owner = scanner.roots.find((r) => p === r || p.startsWith(r + path.sep));
+    if (!owner) {
+      return res.status(400).json({ error: 'Path is outside the scanned locations.' });
     }
     const entries = await fs.readdir(p, { withFileTypes: true });
     const out = [];
@@ -142,7 +164,7 @@ app.get('/api/dir', async (req, res) => {
       }
     }
     out.sort((a, b) => b.bytes - a.bytes);
-    res.json({ path: p, root: scanner.root, totalBytes: scanner.cumBytes.get(p) || 0, entries: out.slice(0, 400) });
+    res.json({ path: p, root: owner, totalBytes: scanner.cumBytes.get(p) || 0, entries: out.slice(0, 400) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -210,23 +232,27 @@ function buildAiSummary(disk) {
   const seen = new Set();
   const tops = [];
   const add = (p, bytes) => {
-    if (seen.has(p) || p === scanner.root) return;
+    if (seen.has(p) || scanner.rootSet.has(p)) return;
     seen.add(p);
     tops.push({ path: tidy(p), gb: gb(bytes) });
   };
   for (const cat of result.categories) for (const d of cat.topDirs.slice(0, 4)) add(d.path, d.bytes);
   for (const [d, bytes] of scanner.cumBytes) {
-    const rel = path.relative(scanner.root, d);
-    if (!rel || rel.split(path.sep).length > 3) continue;
-    if (bytes > 500e6) add(d, bytes);
+    if (bytes <= 500e6 || scanner.rootSet.has(d)) continue;
+    const owner = scanner.roots.find((r) => d.startsWith(r + path.sep));
+    if (!owner) continue;
+    if (d.slice(owner.length + 1).split(path.sep).length > 3) continue;
+    add(d, bytes);
   }
   tops.sort((a, b) => b.gb - a.gb);
 
+  const days2 = (ms) => (ms ? days(ms) : null);
   return {
     disk: { totalGb: gb(disk.totalBytes), freeGb: gb(disk.freeBytes) },
-    scan: { root: tidy(scanner.root), totalGb: gb(result.totalBytes), files: result.filesScanned },
+    scan: { roots: scanner.roots.map(tidy), totalGb: gb(result.totalBytes), files: result.filesScanned },
     categories: result.categories.map((c) => ({ name: c.label, gb: gb(c.bytes) })),
     topFolders: tops.slice(0, 45),
+    applications: (result.apps || []).slice(0, 15).map((a) => ({ name: a.name, gb: gb(a.bytes), lastUsedDaysAgo: days2(a.lastUsedMs) })),
     largeFiles: result.largeFiles.slice(0, 30).map((f) => ({
       path: tidy(f.path),
       gb: gb(f.bytes),
@@ -249,7 +275,8 @@ async function enrichAiRecommendations(recs) {
       p = p.trim();
       if (p === '~' || p.startsWith('~/')) p = path.join(home, p.slice(1));
       const abs = path.resolve(p);
-      if (abs !== home && !abs.startsWith(home + path.sep)) continue;
+      const within = scanner.roots.some((r) => abs === r || abs.startsWith(r + path.sep));
+      if (!within) continue;
       try {
         const st = await fs.lstat(abs);
         const bytes = scanner.cumBytes.get(abs) || (st.isDirectory() ? 0 : (st.blocks || 0) * 512);

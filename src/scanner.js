@@ -3,7 +3,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const os = require('os');
-const { CATEGORIES, categorize } = require('./categories');
+const { CATEGORIES, categorizeAbsolute } = require('./categories');
 
 const LARGE_FILE_FLOOR = 50e6; // only track files >= 50 MB as "large"
 const RECENT_FILE_FLOOR = 5e6; // only track recent files >= 5 MB
@@ -17,8 +17,16 @@ const ABSOLUTE_SKIP = new Set(['/System', '/Volumes', '/private', '/dev', '/Netw
 const NAME_SKIP = new Set(['.Spotlight-V100', '.fseventsd', '.DocumentRevisions-V100', '.TemporaryItems', '.Trashes', '.PreviousSystemInformation']);
 
 class Scanner {
-  constructor(root, opts = {}) {
-    this.root = path.resolve(root);
+  constructor(roots, opts = {}) {
+    // Accept one root or several; drop roots nested inside another root.
+    const resolved = (Array.isArray(roots) ? roots : [roots]).map((p) => path.resolve(p));
+    resolved.sort((a, b) => a.length - b.length);
+    this.roots = [];
+    for (const r of resolved) {
+      if (!this.roots.some((kept) => r === kept || r.startsWith(kept + path.sep))) this.roots.push(r);
+    }
+    this.rootSet = new Set(this.roots);
+    this.rootDevs = new Set();
     this.home = os.homedir();
     this.concurrency = opts.concurrency || 48;
     this.cancelled = false;
@@ -43,21 +51,12 @@ class Scanner {
     this.currentPath = '';
     this.startedAt = null;
     this.finishedAt = null;
-    this.rootDev = null;
     this.pending = [];
     this.pump = null;
   }
 
-  relToHome(p) {
-    if (p === this.home) return '';
-    if (p.startsWith(this.home + path.sep)) return p.slice(this.home.length + 1);
-    return null;
-  }
-
   categorizePath(p, isDir) {
-    const rel = this.relToHome(p);
-    if (rel === null || rel === '') return 'other';
-    return categorize(isDir ? rel + '/' : rel);
+    return categorizeAbsolute(p, this.home, isDir);
   }
 
   noteError(p, err) {
@@ -73,10 +72,19 @@ class Scanner {
   }
 
   async run() {
-    const rootStat = await fs.lstat(this.root);
-    this.rootDev = rootStat.dev;
+    const available = [];
+    for (const root of this.roots) {
+      try {
+        const st = await fs.lstat(root);
+        this.rootDevs.add(st.dev);
+        available.push(root);
+      } catch (e) {
+        this.noteError(root, e);
+      }
+    }
+    if (!available.length) throw new Error('None of the scan locations could be read.');
     this.startedAt = Date.now();
-    this.pending = [this.root];
+    this.pending = [...available];
 
     await new Promise((resolve) => {
       let active = 0;
@@ -133,7 +141,7 @@ class Scanner {
   async queueDir(full) {
     try {
       const st = await fs.lstat(full);
-      if (st.dev !== this.rootDev) return; // don't cross onto other volumes
+      if (!this.rootDevs.has(st.dev)) return; // don't cross onto other volumes
     } catch (e) {
       this.noteError(full, e);
       return;
@@ -184,7 +192,7 @@ class Scanner {
     const cum = new Map(this.dirBytes);
     const dirs = [...cum.keys()].sort((a, b) => b.split(path.sep).length - a.split(path.sep).length);
     for (const d of dirs) {
-      if (d === this.root) continue;
+      if (this.rootSet.has(d)) continue;
       const parent = path.dirname(d);
       if (cum.has(parent)) cum.set(parent, cum.get(parent) + cum.get(d));
     }
@@ -192,7 +200,7 @@ class Scanner {
 
     const childIndex = new Map();
     for (const [d, bytes] of cum) {
-      if (d === this.root) continue;
+      if (this.rootSet.has(d)) continue;
       const parent = path.dirname(d);
       let arr = childIndex.get(parent);
       if (!arr) childIndex.set(parent, (arr = []));
@@ -211,7 +219,7 @@ class Scanner {
   categoryTopDirs() {
     const tops = new Map(CATEGORIES.map((c) => [c.id, []]));
     for (const [d, bytes] of this.cumBytes) {
-      if (d === this.root || bytes < 1e6) continue;
+      if (this.rootSet.has(d) || bytes < 1e6) continue;
       const cat = this.categorizePath(d, true);
       if (cat === 'other') continue;
       if (this.categorizePath(path.dirname(d), true) === cat) continue; // not the top of its region
@@ -236,7 +244,7 @@ class Scanner {
       .sort((a, b) => b.bytes - a.bytes);
 
     return {
-      root: this.root,
+      roots: this.roots.map((p) => ({ path: p, bytes: (this.cumBytes && this.cumBytes.get(p)) || 0 })),
       home: this.home,
       scannedAt: Date.now(),
       durationMs: (this.finishedAt || Date.now()) - (this.startedAt || Date.now()),
